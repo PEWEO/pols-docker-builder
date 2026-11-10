@@ -1,0 +1,119 @@
+name: test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: shellcheck scripts/*.sh
+
+  # Not a pols runner: docker/setup-buildx-action and docker/build-push-action.
+  upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: action
+          persist-credentials: false
+      - id: setup
+        uses: ./action
+      - run: |
+          test "${{ steps.setup.outputs.cached }}" = false
+          test -n "${{ steps.setup.outputs.name }}"
+          docker buildx inspect | grep -E '^Driver: +docker-container'
+      - uses: ./action/build
+        with:
+          context: action/test
+          load: true
+          tags: pols-builder-test:upstream
+      - run: docker image inspect pols-builder-test:upstream >/dev/null
+
+  # As on a pols runner with a cache: BuildKit runs next to the job with its
+  # state on the cache, and the second build reuses the first one's layers.
+  cached:
+    runs-on: ubuntu-latest
+    env:
+      POLS_CACHE_STATUS: /tmp/pols/cache.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: action
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/pols-cache /tmp/pols
+          echo '{"state":"ready","path":"/tmp/pols-cache","repository":"x/y","saved":true}' > /tmp/pols/cache.json
+      - id: setup
+        uses: ./action
+      - run: |
+          test "${{ steps.setup.outputs.cached }}" = true
+          test "${{ steps.setup.outputs.driver }}" = remote
+          docker buildx inspect | grep -E '^Driver: +remote'
+          test -d /tmp/pols-cache/buildkit/state
+      - run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: ./action/build
+        with:
+          context: action/test
+          load: true
+          tags: pols-builder-test:one
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: echo "T1=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: ./action/build
+        with:
+          context: action/test
+          load: true
+          tags: pols-builder-test:two
+      - run: |
+          t2=$(date +%s)
+          echo "first build $((T1 - T0))s, second $((t2 - T1))s"
+          docker image inspect pols-builder-test:two >/dev/null
+          test $((t2 - T1)) -lt $((T1 - T0))
+
+  # The build action alone sets up the cached builder.
+  build-only:
+    runs-on: ubuntu-latest
+    env:
+      POLS_CACHE_STATUS: /tmp/pols/cache.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: action
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/pols-cache /tmp/pols
+          echo '{"state":"ready","path":"/tmp/pols-cache","saved":true}' > /tmp/pols/cache.json
+      - uses: ./action/build
+        with:
+          context: action/test
+          load: true
+          tags: pols-builder-test:alone
+      - run: |
+          docker buildx inspect pols | grep -E '^Driver: +remote'
+          docker image inspect pols-builder-test:alone >/dev/null
+
+  # pols says the job has no cache: the upstream actions, at once.
+  no-cache:
+    runs-on: ubuntu-latest
+    env:
+      POLS_CACHE_STATUS: /tmp/pols/cache.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: action
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/pols
+          echo '{"state":"none","reason":"this runner runs in Incus, which has no caches"}' > /tmp/pols/cache.json
+      - id: setup
+        uses: ./action
+      - run: |
+          test "${{ steps.setup.outputs.cached }}" = false
+          docker buildx inspect | grep -E '^Driver: +docker-container'

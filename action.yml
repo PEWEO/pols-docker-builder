@@ -1,0 +1,135 @@
+name: pols Docker builder
+description: Sets up a Docker Buildx builder whose layer cache stays on the pols runner cache between jobs; elsewhere, docker/setup-buildx-action.
+author: pols.so
+branding:
+  icon: package
+  color: gray-dark
+
+# The inputs and outputs of docker/setup-buildx-action, with its defaults.
+inputs:
+  version:
+    description: Buildx version (off pols runners; pols runners use the image's)
+    required: false
+  driver:
+    description: Builder driver (off pols runners; pols runners run BuildKit next to the job)
+    required: false
+    default: docker-container
+  driver-opts:
+    description: Driver options (off pols runners)
+    required: false
+  buildkitd-flags:
+    description: Flags for buildkitd
+    required: false
+  buildkitd-config:
+    description: BuildKit daemon config file
+    required: false
+  buildkitd-config-inline:
+    description: Inline BuildKit daemon config
+    required: false
+  use:
+    description: Switch to this builder instance
+    required: false
+    default: "true"
+  name:
+    description: Name of the builder
+    required: false
+  endpoint:
+    description: Docker context or endpoint for the node (off pols runners)
+    required: false
+  platforms:
+    description: Fixed platforms for the node, comma-separated
+    required: false
+  append:
+    description: Nodes to append to the builder (off pols runners)
+    required: false
+  keep-state:
+    description: Keep BuildKit state on cleanup (off pols runners; on pols runners the state is the cache)
+    required: false
+    default: "false"
+  cache-binary:
+    description: Cache the buildx binary (off pols runners)
+    required: false
+    default: "true"
+  cleanup:
+    description: Clean up state on job end (off pols runners)
+    required: false
+    default: "true"
+  cache-wait:
+    description: Seconds to wait for pols to say whether the job has a cache
+    required: false
+    default: "60"
+
+outputs:
+  name:
+    description: Builder name
+    value: ${{ steps.pols.outputs.name || steps.upstream.outputs.name }}
+  driver:
+    description: Builder driver
+    value: ${{ steps.pols.outputs.driver || steps.upstream.outputs.driver }}
+  platforms:
+    description: Builder node platforms
+    value: ${{ steps.pols.outputs.platforms || steps.upstream.outputs.platforms }}
+  nodes:
+    description: Builder nodes metadata
+    value: ${{ steps.pols.outputs.nodes || steps.upstream.outputs.nodes }}
+  endpoint:
+    description: Builder node endpoint
+    value: ${{ steps.pols.outputs.endpoint || steps.upstream.outputs.endpoint }}
+  status:
+    description: Builder node status
+    value: ${{ steps.pols.outputs.status || steps.upstream.outputs.status }}
+  flags:
+    description: Builder node flags
+    value: ${{ steps.upstream.outputs.flags }}
+  cached:
+    description: Whether the builder keeps its layers on the pols runner cache (true or false)
+    value: ${{ steps.cache.outputs.mode == 'cached' }}
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      shell: bash
+      env:
+        POLS_CACHE_WAIT: ${{ inputs.cache-wait }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/cache-status.sh"
+
+    - id: pols
+      if: steps.cache.outputs.mode == 'cached'
+      shell: bash
+      env:
+        CACHE: ${{ steps.cache.outputs.path }}
+        BUILDER_NAME: ${{ inputs.name }}
+        USE: ${{ inputs.use }}
+        PLATFORMS: ${{ inputs.platforms }}
+        BUILDKITD_FLAGS: ${{ inputs.buildkitd-flags }}
+        BUILDKITD_CONFIG: ${{ inputs.buildkitd-config }}
+        BUILDKITD_CONFIG_INLINE: ${{ inputs.buildkitd-config-inline }}
+        DRIVER: ${{ inputs.driver }}
+        DRIVER_OPTS: ${{ inputs.driver-opts }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/start-buildkit.sh"
+
+    - id: upstream
+      if: steps.cache.outputs.mode != 'cached'
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        version: ${{ inputs.version }}
+        driver: ${{ inputs.driver }}
+        driver-opts: ${{ inputs.driver-opts }}
+        buildkitd-flags: ${{ inputs.buildkitd-flags }}
+        buildkitd-config: ${{ inputs.buildkitd-config }}
+        buildkitd-config-inline: ${{ inputs.buildkitd-config-inline }}
+        use: ${{ inputs.use }}
+        name: ${{ inputs.name }}
+        endpoint: ${{ inputs.endpoint }}
+        platforms: ${{ inputs.platforms }}
+        append: ${{ inputs.append }}
+        keep-state: ${{ inputs.keep-state }}
+        cache-binary: ${{ inputs.cache-binary }}
+        cleanup: ${{ inputs.cleanup }}
+
+    - if: steps.cache.outputs.mode != 'cached'
+      shell: bash
+      env:
+        NAME: ${{ steps.upstream.outputs.name }}
+      run: echo "POLS_DOCKER_BUILDER=$NAME" >>"$GITHUB_ENV"
