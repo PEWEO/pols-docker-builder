@@ -83,13 +83,14 @@ fi
 
 docker buildx rm "${name}" >/dev/null 2>&1 || true
 create=(docker buildx create --name "${name}" --driver remote)
-[[ -n "${PLATFORMS:-}" ]] && create+=(--platform "${PLATFORMS}")
-[[ "${USE:-true}" == "true" ]] && create+=(--use)
+if [[ -n "${PLATFORMS:-}" ]]; then create+=(--platform "${PLATFORMS}"); fi
+if [[ "${USE:-true}" == "true" ]]; then create+=(--use); fi
 "${create[@]}" "unix://${sock}"
 docker buildx inspect --bootstrap "${name}"
-[[ "${INSTALL:-false}" == "true" ]] && docker buildx install
+if [[ "${INSTALL:-false}" == "true" ]]; then docker buildx install; fi
 
-platforms="$(docker buildx inspect "${name}" | awk -F': *' '/^Platforms:/ { print $2; exit }')"
+# awk reads it all: stopping early would kill docker with SIGPIPE.
+platforms="$(docker buildx inspect "${name}" | awk -F': *' '/^Platforms:/ && !p { print $2; p = 1 }')"
 {
 	echo "name=${name}"
 	echo "driver=remote"

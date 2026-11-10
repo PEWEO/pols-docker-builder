@@ -101,6 +101,7 @@ runs:
         CACHE: ${{ steps.cache.outputs.path }}
         BUILDER_NAME: ${{ inputs.name }}
         USE: ${{ inputs.use }}
+        INSTALL: "false"
         PLATFORMS: ${{ inputs.platforms }}
         BUILDKITD_FLAGS: ${{ inputs.buildkitd-flags }}
         BUILDKITD_CONFIG: ${{ inputs.buildkitd-config }}
